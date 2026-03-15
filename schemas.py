@@ -84,3 +84,21 @@ class PhieuMuonResponse(PhieuMuonBase):
     tinh_trang: str
     
     model_config = ConfigDict(from_attributes=True)
+
+# --- SCHEMAS CHO NHÂN VIÊN (QUẢN TRỊ & THỦ THƯ) ---
+class NhanVienBase(BaseModel):
+    ma_nhan_vien: str
+    ho_ten: str
+    username: str
+    vai_tro: str # 'Admin' hoặc 'ThuThu'
+
+class NhanVienCreate(NhanVienBase):
+    password: str
+
+class NhanVienResponse(NhanVienBase):
+    model_config = ConfigDict(from_attributes=True)
+
+# --- SCHEMAS CHO ĐĂNG NHẬP ---
+class Token(BaseModel):
+    access_token: str
+    token_type: str

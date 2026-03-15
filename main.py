@@ -1,7 +1,9 @@
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+import auth
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
-from datetime import time
+from datetime import date
 from sqlalchemy import func, desc
 
 import models
@@ -229,3 +231,45 @@ def bao_cao_doc_gia_chua_tra(db: Session = Depends(get_db)):
             "ngay_muon": row.ngay_muon
         } for row in result
     ]
+
+# ==========================================
+# API QUẢN TRỊ VIÊN & XÁC THỰC
+# ==========================================
+@app.post("/api/nhanvien/", response_model=schemas.NhanVienResponse, tags=["Quản lý Hệ thống"])
+def tao_tai_khoan_nhan_vien(nhanvien: schemas.NhanVienCreate, db: Session = Depends(get_db)):
+    # Nghiệp vụ: Quản trị viên cập nhật thông tin thủ thư vào hệ thống, tạo tài khoản và cấp quyền 
+    db_nv = db.query(models.NhanVien).filter(models.NhanVien.ma_nhan_vien == nhanvien.ma_nhan_vien).first()
+    if db_nv:
+        raise HTTPException(status_code=400, detail="Mã nhân viên đã tồn tại")
+        
+    db_user = db.query(models.NhanVien).filter(models.NhanVien.username == nhanvien.username).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="Username này đã được sử dụng")
+
+    # Băm mật khẩu trước khi lưu vào database
+    hashed_pwd = auth.get_password_hash(nhanvien.password)
+    
+    new_nv = models.NhanVien(
+        ma_nhan_vien=nhanvien.ma_nhan_vien,
+        ho_ten=nhanvien.ho_ten,
+        username=nhanvien.username,
+        password_hash=hashed_pwd,
+        vai_tro=nhanvien.vai_tro
+    )
+    db.add(new_nv)
+    db.commit()
+    db.refresh(new_nv)
+    return new_nv
+
+@app.post("/api/login", response_model=schemas.Token, tags=["Xác thực"])
+def dang_nhap(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    # Tìm user trong database
+    user = db.query(models.NhanVien).filter(models.NhanVien.username == form_data.username).first()
+    
+    # Kiểm tra user có tồn tại và mật khẩu có khớp không
+    if not user or not auth.verify_password(form_data.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Sai username hoặc password")
+
+    # Tạo token chứa thông tin username và vai trò (Admin/ThuThu)
+    access_token = auth.create_access_token(data={"sub": user.username, "role": user.vai_tro})
+    return {"access_token": access_token, "token_type": "bearer"}
