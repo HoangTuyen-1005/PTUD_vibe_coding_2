@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
+from datetime import time
 
 import models
 import schemas
@@ -53,3 +54,128 @@ def xoa_the_thu_vien(ma_doc_gia: str, db: Session = Depends(get_db)):
     db.delete(db_docgia)
     db.commit()
     return {"message": f"Đã xóa thành công thẻ thư viện {ma_doc_gia}"}
+
+# ==========================================
+# API QUẢN LÝ CHUYÊN NGÀNH
+# ==========================================
+@app.post("/api/chuyennganh/", response_model=schemas.ChuyenNganhResponse, tags=["Quản lý Sách"])
+def them_chuyen_nganh(chuyennganh: schemas.ChuyenNganhCreate, db: Session = Depends(get_db)):
+    db_cn = db.query(models.ChuyenNganh).filter(models.ChuyenNganh.ma_chuyen_nganh == chuyennganh.ma_chuyen_nganh).first()
+    if db_cn:
+        raise HTTPException(status_code=400, detail="Mã chuyên ngành đã tồn tại")
+    
+    new_cn = models.ChuyenNganh(**chuyennganh.model_dump())
+    db.add(new_cn)
+    db.commit()
+    db.refresh(new_cn)
+    return new_cn
+
+@app.get("/api/chuyennganh/", response_model=List[schemas.ChuyenNganhResponse], tags=["Quản lý Sách"])
+def lay_danh_sach_chuyen_nganh(db: Session = Depends(get_db)):
+    return db.query(models.ChuyenNganh).all()
+
+# ==========================================
+# API QUẢN LÝ ĐẦU SÁCH VÀ BẢN SAO SÁCH
+# ==========================================
+@app.post("/api/dausach/", response_model=schemas.DauSachResponse, tags=["Quản lý Sách"])
+def them_dau_sach(dausach: schemas.DauSachCreate, db: Session = Depends(get_db)):
+    # Kiểm tra chuyên ngành có tồn tại không
+    db_cn = db.query(models.ChuyenNganh).filter(models.ChuyenNganh.ma_chuyen_nganh == dausach.ma_chuyen_nganh).first()
+    if not db_cn:
+        raise HTTPException(status_code=404, detail="Không tìm thấy Mã chuyên ngành này")
+        
+    db_ds = db.query(models.DauSach).filter(models.DauSach.ma_dau_sach == dausach.ma_dau_sach).first()
+    if db_ds:
+        raise HTTPException(status_code=400, detail="Mã đầu sách đã tồn tại")
+    
+    new_ds = models.DauSach(**dausach.model_dump())
+    db.add(new_ds)
+    db.commit()
+    db.refresh(new_ds)
+    return new_ds
+
+@app.post("/api/bansaosach/", response_model=schemas.BanSaoSachResponse, tags=["Quản lý Sách"])
+def nhap_ban_sao_sach(bansaosach: schemas.BanSaoSachCreate, db: Session = Depends(get_db)):
+    # 1. Kiểm tra đầu sách có tồn tại không
+    db_ds = db.query(models.DauSach).filter(models.DauSach.ma_dau_sach == bansaosach.ma_dau_sach).first()
+    if not db_ds:
+        raise HTTPException(status_code=404, detail="Không tìm thấy Đầu sách này để thêm bản sao")
+        
+    # 2. Kiểm tra mã bản sao sách đã tồn tại chưa
+    db_bss = db.query(models.BanSaoSach).filter(models.BanSaoSach.ma_sach == bansaosach.ma_sach).first()
+    if db_bss:
+        raise HTTPException(status_code=400, detail="Mã cuốn sách này đã tồn tại")
+
+    # 3. Thêm bản sao sách mới
+    new_bss = models.BanSaoSach(**bansaosach.model_dump())
+    db.add(new_bss)
+    
+    # 4. Tự động cập nhật số lượng sách trong bảng DauSach
+    db_ds.so_luong_sach += 1
+    
+    db.commit()
+    db.refresh(new_bss)
+    return new_bss
+
+# ==========================================
+# API QUẢN LÝ MƯỢN / TRẢ SÁCH
+# ==========================================
+@app.post("/api/phieumuon/", response_model=schemas.PhieuMuonResponse, tags=["Quản lý Mượn Trả"])
+def tao_phieu_muon(phieumuon: schemas.PhieuMuonCreate, db: Session = Depends(get_db)):
+    # 1. Kiểm tra mã độc giả có hợp lệ không
+    doc_gia = db.query(models.DocGia).filter(models.DocGia.ma_doc_gia == phieumuon.ma_doc_gia).first()
+    if not doc_gia:
+        raise HTTPException(status_code=404, detail="Không tìm thấy thẻ độc giả này")
+    
+    # 2. RÀNG BUỘC: Mỗi độc giả chỉ được mượn 1 cuốn sách cùng lúc
+    phieu_dang_muon = db.query(models.PhieuMuon).filter(
+        models.PhieuMuon.ma_doc_gia == phieumuon.ma_doc_gia,
+        models.PhieuMuon.tinh_trang == "Đang mượn"
+    ).first()
+    if phieu_dang_muon:
+        raise HTTPException(status_code=400, detail="Độc giả này đang mượn 1 cuốn sách chưa trả. Phải trả sách cũ trước khi mượn mới.")
+
+    # 3. Kiểm tra mã cuốn sách có tồn tại và đang rảnh không
+    ban_sao_sach = db.query(models.BanSaoSach).filter(models.BanSaoSach.ma_sach == phieumuon.ma_sach).first()
+    if not ban_sao_sach:
+        raise HTTPException(status_code=404, detail="Không tìm thấy mã cuốn sách này")
+    if ban_sao_sach.tinh_trang != "Sẵn sàng":
+        raise HTTPException(status_code=400, detail="Cuốn sách này hiện không có sẵn (đã được mượn hoặc hỏng)")
+    
+    # 4. Tạo phiếu mượn mới
+    new_phieu = models.PhieuMuon(
+        ma_sach=phieumuon.ma_sach,
+        ma_doc_gia=phieumuon.ma_doc_gia,
+        ma_thu_thu=phieumuon.ma_thu_thu,
+        ngay_muon=date.today(),
+        tinh_trang="Đang mượn"
+    )
+    db.add(new_phieu)
+    
+    # 5. Đổi trạng thái của cuốn sách thành 'Đang mượn'
+    ban_sao_sach.tinh_trang = "Đang mượn"
+    
+    db.commit()
+    db.refresh(new_phieu)
+    return new_phieu
+
+@app.put("/api/phieumuon/{ma_phieu}/trasach", response_model=schemas.PhieuMuonResponse, tags=["Quản lý Mượn Trả"])
+def tra_sach(ma_phieu: int, db: Session = Depends(get_db)):
+    # 1. Lấy thông tin phiếu mượn
+    phieu_muon = db.query(models.PhieuMuon).filter(models.PhieuMuon.ma_phieu == ma_phieu).first()
+    if not phieu_muon:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phiếu mượn này")
+    if phieu_muon.tinh_trang == "Đã trả":
+        raise HTTPException(status_code=400, detail="Phiếu mượn này đã được hoàn tất trả sách trước đó")
+
+    # 2. Tìm cuốn sách để cập nhật lại trạng thái
+    ban_sao_sach = db.query(models.BanSaoSach).filter(models.BanSaoSach.ma_sach == phieu_muon.ma_sach).first()
+    
+    # 3. Thực hiện trả sách: Đổi trạng thái phiếu và trạng thái sách
+    phieu_muon.tinh_trang = "Đã trả"
+    if ban_sao_sach:
+        ban_sao_sach.tinh_trang = "Sẵn sàng"
+        
+    db.commit()
+    db.refresh(phieu_muon)
+    return phieu_muon
