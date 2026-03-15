@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import time
+from sqlalchemy import func, desc
 
 import models
 import schemas
@@ -179,3 +180,52 @@ def tra_sach(ma_phieu: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(phieu_muon)
     return phieu_muon
+
+# ==========================================
+# API BÁO CÁO THỐNG KÊ
+# ==========================================
+@app.get("/api/baocao/sach-muon-nhieu", tags=["Báo cáo Thống kê"])
+def bao_cao_sach_muon_nhieu_nhat(limit: int = 5, db: Session = Depends(get_db)):
+    # Báo cáo 1: Thông tin các đầu sách cho mượn nhiều nhất
+    # Logic: Join PhieuMuon -> BanSaoSach -> DauSach, sau đó đếm (count) và sắp xếp giảm dần (desc)
+    result = db.query(
+        models.DauSach.ten_dau_sach,
+        func.count(models.PhieuMuon.ma_phieu).label("so_luot_muon")
+    ).join(
+        models.BanSaoSach, models.BanSaoSach.ma_sach == models.PhieuMuon.ma_sach
+    ).join(
+        models.DauSach, models.DauSach.ma_dau_sach == models.BanSaoSach.ma_dau_sach
+    ).group_by(
+        models.DauSach.ma_dau_sach
+    ).order_by(
+        desc("so_luot_muon")
+    ).limit(limit).all()
+    
+    # Chuyển đổi kết quả thành list dạng JSON
+    return [{"ten_dau_sach": row.ten_dau_sach, "so_luot_muon": row.so_luot_muon} for row in result]
+
+@app.get("/api/baocao/docgia-chua-tra", tags=["Báo cáo Thống kê"])
+def bao_cao_doc_gia_chua_tra(db: Session = Depends(get_db)):
+    # Báo cáo 2: Thông tin về các độc giả chưa trả sách
+    # Logic: Tìm các phiếu mượn có tình trạng "Đang mượn" và join lấy thông tin người mượn
+    result = db.query(
+        models.DocGia.ma_doc_gia,
+        models.DocGia.ho_ten,
+        models.DocGia.lop,
+        models.PhieuMuon.ma_sach,
+        models.PhieuMuon.ngay_muon
+    ).join(
+        models.PhieuMuon, models.PhieuMuon.ma_doc_gia == models.DocGia.ma_doc_gia
+    ).filter(
+        models.PhieuMuon.tinh_trang == "Đang mượn"
+    ).all()
+    
+    return [
+        {
+            "ma_doc_gia": row.ma_doc_gia, 
+            "ho_ten": row.ho_ten, 
+            "lop": row.lop,
+            "ma_sach_dang_muon": row.ma_sach,
+            "ngay_muon": row.ngay_muon
+        } for row in result
+    ]
