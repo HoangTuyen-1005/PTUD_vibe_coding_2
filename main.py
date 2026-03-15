@@ -1,4 +1,5 @@
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.middleware.cors import CORSMiddleware
 import auth
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -14,6 +15,16 @@ from database import engine, get_db
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Hệ thống Quản lý Thư viện - Vibe Coding 2")
+
+# --- BẮT ĐẦU ĐOẠN CẤU HÌNH CORS ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Cho phép mọi nguồn (Frontend) gọi tới
+    allow_credentials=True,
+    allow_methods=["*"],  # Cho phép mọi phương thức GET, POST, PUT, DELETE
+    allow_headers=["*"],
+)
+# --- KẾT THÚC ĐOẠN CẤU HÌNH CORS ---
 
 @app.post("/api/docgia/", response_model=schemas.DocGiaResponse, tags=["Quản lý Độc giả"])
 def tao_the_thu_vien(docgia: schemas.DocGiaCreate, db: Session = Depends(get_db)):
